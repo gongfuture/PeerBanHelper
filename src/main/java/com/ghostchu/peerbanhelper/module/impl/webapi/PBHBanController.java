@@ -76,7 +76,7 @@ public final class PBHBanController extends AbstractFeatureModule {
 
     @Override
     public void onEnable() {
-        webContainer.javalin()
+        webContainer.javalinRouter()
                 .get("/api/bans", this::handleBans, Role.USER_READ)
                 .get("/api/bans/logs", this::handleLogs, Role.USER_READ)
                 .get("/api/bans/ranks", this::handleRanks, Role.USER_READ)
@@ -195,7 +195,7 @@ public final class PBHBanController extends AbstractFeatureModule {
                 .filter(b -> search == null
                         || Arrays.stream(b.getKey().toStandardStrings()).anyMatch(ip -> ip.toLowerCase(Locale.ROOT).contains(search.toLowerCase(Locale.ROOT)))
                         || b.getValue().toString().toLowerCase(Locale.ROOT).contains(search.toLowerCase(Locale.ROOT)))
-                .map(entry -> new BanDTO(entry.getKey().toNormalizedString(), new BakedBanMetadata(locale, entry.getValue()), null))
+                .map(entry -> new BanDTO(entry.getKey().toCompressedString(), new BakedBanMetadata(locale, entry.getValue()), null))
                 .sorted((o1, o2) -> o2.getBanMetadata().getBanAt().compareTo(o1.getBanMetadata().getBanAt()));
 
         banResponseList = banResponseList.peek(response -> {

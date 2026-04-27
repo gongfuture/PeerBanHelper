@@ -104,9 +104,9 @@ public class PeerBanHelper implements Reloadable {
         Main.getGuiManager().onPBHFullyStarted(this);
         if (webContainer.getToken() == null || webContainer.getToken().isBlank()) {
             for (int i = 0; i < 50; i++) {
-                log.error(tlUI(Lang.PBH_OOBE_REQUIRED, "http://127.0.0.1:" + webContainer.javalin().port()));
+                log.error(tlUI(Lang.PBH_OOBE_REQUIRED, "http://127.0.0.1:" + webContainer.getJavalin().port()));
             }
-            Main.getGuiManager().openUrlInBrowser("http://127.0.0.1:" + webContainer.javalin().port());
+            Main.getGuiManager().openUrlInBrowser("http://127.0.0.1:" + webContainer.getJavalin().port());
         }
         runTestCode();
         telemetry.sendBootEvent();
@@ -263,7 +263,8 @@ public class PeerBanHelper implements Reloadable {
         moduleClasses.add(SessionAnalyseServiceModule.class);
         moduleClasses.add(PeerRecordingServiceModule.class);
         moduleClasses.add(AntiVampire.class);
-        moduleClasses.parallelStream().forEach(moduleClass -> moduleManager.register(moduleClass));
+        moduleClasses.add(PBHPluginController.class);
+        moduleClasses.forEach(moduleClass -> moduleManager.register(moduleClass)); // 不要并行加载，会破坏依赖关系
     }
 
     @Deprecated(forRemoval = true)

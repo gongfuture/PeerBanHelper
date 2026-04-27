@@ -68,7 +68,7 @@ public final class IPBlackList extends AbstractRuleFeatureModule implements Relo
     @Override
     public void onEnable() {
         reloadConfig();
-        webContainer.javalin()
+        webContainer.javalinRouter()
                 .get("/api/modules/ipblacklist/{ruleType}", this::handleWebAPI, Role.USER_READ)
                 .post("/api/modules/ipblacklist/ip/test", this::handleIPTest, Role.USER_WRITE)
                 .put("/api/modules/ipblacklist/ip", this::handleIPPut, Role.USER_WRITE)
@@ -214,7 +214,7 @@ public final class IPBlackList extends AbstractRuleFeatureModule implements Relo
         UserIPTestResult testResult = new UserIPTestResult(
                 lower.toFullString(),
                 upper.toFullString(),
-                ipAddress.toNormalizedString(),
+                ipAddress.toCompressedString(),
                 ipAddress.getCount().toString());
         context.json(new StdResp(true, null, testResult));
         saveConfig();
@@ -308,7 +308,7 @@ public final class IPBlackList extends AbstractRuleFeatureModule implements Relo
             for (IPAddress ra : ips) {
                 if (ra.equals(pa) || ra.contains(pa)) {
                     return new CheckResult(getClass(), PeerAction.BAN, banDuration, new TranslationComponent(Lang.IP_BLACKLIST_CIDR_RULE, ra.toString()), new TranslationComponent(Lang.MODULE_IBL_MATCH_IP, ra.toString()),
-                            StructuredData.create().add("type", "ip").add("rule", ra.toNormalizedString()));
+                            StructuredData.create().add("type", "ip").add("rule", ra.toCompressedString()));
                 }
             }
             try {
@@ -347,16 +347,16 @@ public final class IPBlackList extends AbstractRuleFeatureModule implements Relo
         }
         if (networkType != null && geoData.getNetwork() != null && geoData.getNetwork().getNetType() != null) {
             String netType = geoData.getNetwork().getNetType();
-            boolean hit = switch (netType) {
+            boolean hit = switch (netType) { // TODO: 有空得改成枚举
                 case "宽带" -> networkType.contains("wideband");
                 case "基站" -> networkType.contains("baseStation");
-                case "政企专线" -> networkType.contains("governmentAndEnterpriseLine");
+                case "政企专线", "专线" -> networkType.contains("governmentAndEnterpriseLine");
                 case "业务平台" -> networkType.contains("businessPlatform");
                 case "骨干网" -> networkType.contains("backboneNetwork");
                 case "IP 专网", "IP专网" -> networkType.contains("ipPrivateNetwork");
                 case "网吧" -> networkType.contains("internetCafe");
                 case "物联网" -> networkType.contains("iot");
-                case "数据中心" -> networkType.contains("dataCenter") || networkType.contains("datacenter"); // fe workaround
+                case "数据中心", "IDC" -> networkType.contains("dataCenter") || networkType.contains("datacenter"); // fe workaround
                 default -> false;
             };
             if (hit) {

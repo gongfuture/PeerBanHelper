@@ -18,12 +18,16 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import inet.ipaddr.IPAddress;
 import io.javalin.Javalin;
+import io.javalin.compression.CompressionStrategy;
+import io.javalin.config.RoutesConfig;
 import io.javalin.http.Context;
 import io.javalin.http.Handler;
 import io.javalin.http.HttpStatus;
+import io.javalin.http.staticfiles.JavalinStaticResourceHandler;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.json.JsonMapper;
 import io.javalin.plugin.bundled.CorsPluginConfig;
+import io.javalin.router.EndpointNotFound;
 import io.sentry.Sentry;
 import lombok.Getter;
 import lombok.Setter;
@@ -46,6 +50,7 @@ import static com.ghostchu.peerbanhelper.text.TextManager.tlUI;
 
 @Slf4j
 public final class JavalinWebContainer implements Reloadable {
+    @Getter
     private Javalin javalin;
     @Setter
     private LicenseManager licenseManager;
@@ -80,39 +85,37 @@ public final class JavalinWebContainer implements Reloadable {
 
     public void setupJavalin() {
         this.javalin = Javalin.create(c -> {
-                    c.http.gzipOnlyCompression();
-                    c.showJavalinBanner = false;
-                    c.jsonMapper(gsonMapper);
-                    c.useVirtualThreads = true;
-                    c.startupWatcherEnabled = false;
-                    if (Main.getMainConfig().getBoolean("server.allow-cors")
-                            || ExternalSwitch.parse("pbh.allowCors") != null
-                    ) {
-                        c.bundledPlugins.enableCors(cors -> cors.addRule(CorsPluginConfig.CorsRule::anyHost));
-                    }
-                    if (Main.getMainConfig().getBoolean("server.external-webui", false)) {
-                        c.staticFiles.add(staticFiles -> {
-                            staticFiles.hostedPath = "/";
-                            staticFiles.directory = new File(Main.getDataDirectory(), "static").getPath();
-                            staticFiles.location = Location.EXTERNAL;
-                            staticFiles.precompress = false;
-                            staticFiles.skipFileFunction = req -> req.getRequestURI().endsWith("index.html");
-                            //staticFiles.headers.put("Cache-Control", "no-cache");
-                        });
-                        c.spaRoot.addFile("/", new File(new File(Main.getDataDirectory(), "static"), "index.html").getPath(), Location.EXTERNAL);
-                    } else {
-                        //c.spaRoot.addFile("/", "/static/index.html", Location.CLASSPATH);
-                        c.spaRoot.addHandler("/", ctx -> spaHandler.get().handle(ctx));
-                        c.staticFiles.add(staticFiles -> {
-                            staticFiles.hostedPath = "/";
-                            staticFiles.directory = "/static";
-                            staticFiles.location = Location.CLASSPATH;
-                            staticFiles.precompress = false;
-                            staticFiles.skipFileFunction = req -> req.getRequestURI().endsWith("index.html");
-                        });
-                    }
-                })
-                .exception(IPAddressBannedException.class, (e, ctx) -> {
+            c.http.compressionStrategy = CompressionStrategy.GZIP;
+            c.startup.showJavalinBanner = false;
+            c.jsonMapper(gsonMapper);
+            c.concurrency.useVirtualThreads = true;
+            c.startup.startupWatcherEnabled = false;
+            if (Main.getMainConfig().getBoolean("server.allow-cors")
+                    || ExternalSwitch.parse("pbh.allowCors") != null
+            ) {
+                c.bundledPlugins.enableCors(cors -> cors.addRule(CorsPluginConfig.CorsRule::anyHost));
+            }
+            c.resourceHandler(new JavalinStaticResourceHandler());
+            if (Main.getMainConfig().getBoolean("server.external-webui", false)) {
+                c.staticFiles.add(staticFiles -> {
+                    staticFiles.hostedPath = "/";
+                    staticFiles.directory = new File(Main.getDataDirectory(), "static").getPath();
+                    staticFiles.location = Location.EXTERNAL;
+                    staticFiles.precompressMaxSize = -1;
+                });
+                c.spaRoot.addFile("/", new File(new File(Main.getDataDirectory(), "static"), "index.html").getPath(), Location.EXTERNAL);
+            } else {
+                c.spaRoot.addHandler("/", ctx -> spaHandler.get().handle(ctx));
+                c.staticFiles.add(staticFiles -> {
+                    staticFiles.hostedPath = "/";
+                    staticFiles.directory = "/static";
+                    staticFiles.location = Location.CLASSPATH;
+                    staticFiles.precompressMaxSize = -1;
+                    staticFiles.skipFileFunction = req -> "/".equals(req.getRequestURI());
+                });
+            }
+        });
+        this.javalin.unsafe.routes.exception(IPAddressBannedException.class, (e, ctx) -> {
                     ctx.status(HttpStatus.TOO_MANY_REQUESTS);
                     ctx.json(new StdResp(false, tl(reqLocale(ctx), Lang.WEBAPI_AUTH_BANNED_TOO_FREQ), null));
                 })
@@ -136,12 +139,29 @@ public final class JavalinWebContainer implements Reloadable {
                 .exception(BlockScannerException.class, (e, ctx) -> {
                     ctx.status(HttpStatus.NOT_FOUND);
                     ctx.header("Server", "nginx");
-                    ctx.result("404 not found");
+                    ctx.result("""
+                            <html>
+                            <head><title>404 Not Found</title></head>
+                            <body>
+                            <center><h1>404 Not Found</h1></center>
+                            <hr><center>nginx</center>
+                            </body>
+                            </html>
+                            <!-- a padding to disable MSIE and Chrome friendly error page -->
+                            <!-- a padding to disable MSIE and Chrome friendly error page -->
+                            <!-- a padding to disable MSIE and Chrome friendly error page -->
+                            <!-- a padding to disable MSIE and Chrome friendly error page -->
+                            <!-- a padding to disable MSIE and Chrome friendly error page -->
+                            <!-- a padding to disable MSIE and Chrome friendly error page -->""");
                     ctx.attribute("skipAfter", true);
                 })
                 .exception(DemoModeException.class, (e, ctx) -> {
                     ctx.status(HttpStatus.BAD_REQUEST);
                     ctx.json(new StdResp(false, tl(reqLocale(ctx), Lang.DEMO_MODE_OPERATION_NOT_PERMITTED), null));
+                })
+                .exception(EndpointNotFound.class, (e, ctx) -> {
+                    ctx.status(HttpStatus.METHOD_NOT_ALLOWED);
+                    ctx.json(new StdResp(false, tl(reqLocale(ctx), Lang.WEBAPI_ROUTE_NOT_EXISTS, ctx.method(), ctx.path()), null));
                 })
                 .exception(Exception.class, (e, ctx) -> {
                     ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
@@ -149,7 +169,7 @@ public final class JavalinWebContainer implements Reloadable {
                     log.error("500 Internal Server Error", e);
                 })
                 .beforeMatched(ctx -> {
-                    if (!securityCheck(ctx)) {
+                    if (!securityCheck(ctx) && ExternalSwitch.parseBoolean("pbh.web.securityCheck.blockScanner", true)) {
                         throw new BlockScannerException();
                     }
                     if (ctx.routeRoles().isEmpty()) {
@@ -210,6 +230,9 @@ public final class JavalinWebContainer implements Reloadable {
 
 
     private void handleSpaRequest(@NotNull Context ctx) throws IOException {
+        if (ctx.path().startsWith("/api")) {
+            throw new EndpointNotFound(ctx.method(), ctx.path());
+        }
         try (var in = this.getClass().getResourceAsStream("/static/index.html")) {
             if (in == null) {
                 ctx.status(HttpStatus.NOT_FOUND);
@@ -297,10 +320,9 @@ public final class JavalinWebContainer implements Reloadable {
         this.started = true;
     }
 
-    public Javalin javalin() {
-        return javalin;
+    public RoutesConfig javalinRouter() {
+        return this.javalin.unsafe.routes;
     }
-
     public String reqLocale(Context context) {
         for (AcceptLanguages requestLocale : requestLocales(context)) {
             String pbhCode = requestLocale.code.toLowerCase(Locale.ROOT).replace("-", "_");
@@ -360,9 +382,9 @@ public final class JavalinWebContainer implements Reloadable {
             ipAddr = ipAddr.toIPv4();
         }
         if (ipAddr.isIPv4()) {
-            ipAddr = IPAddressUtil.toPrefixBlockAndZeroHost(ipAddr, 24);
+            ipAddr = ipAddr.toPrefixBlock(24);
         } else {
-            ipAddr = IPAddressUtil.toPrefixBlockAndZeroHost(ipAddr, 50);
+            ipAddr = ipAddr.toPrefixBlock(50);
         }
         return ipAddr;
     }

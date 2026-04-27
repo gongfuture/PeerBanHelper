@@ -93,21 +93,28 @@ public final class BtnAbilitySubmitBans extends AbstractBtnAbility {
     }
 
     private void submit() {
-        btnNetwork.getBackgroundTaskManager().addTaskAsync(new FunctionalBackgroundTask(new TranslationComponent(Lang.BTN_ABILITY_SUBMIT_BANS_SYNC_SERVER), (task, callback) -> {
-            log.info(tlUI(Lang.BTN_SUBMITTING_BANS));
-            int size = 0;
-            int requests = 0;
-            Page<HistoryEntity> page = new Page<>(1, 100); // 每页处理 100 条
-            do {
-                var result = historyDao.page(page, new LambdaQueryWrapper<HistoryEntity>().gt(HistoryEntity::getId, getMemCursor()));
-                if (result.getRecords().isEmpty()) break;
-                setMemCursor(createSubmitRequest(result.getRecords()));
-                requests++;
-                size += result.getRecords().size();
-            } while (page.hasNext());
-            log.info(tlUI(Lang.BTN_SUBMITTED_BANS, size, requests));
-            setLastStatus(true, new TranslationComponent(Lang.BTN_REPORTED_DATA, size));
-        })).join();
+        try {
+            btnNetwork.getBackgroundTaskManager().addTaskAsync(new FunctionalBackgroundTask(new TranslationComponent(Lang.BTN_ABILITY_SUBMIT_BANS_SYNC_SERVER), (task, callback) -> {
+                log.info(tlUI(Lang.BTN_SUBMITTING_BANS));
+                int size = 0;
+                int requests = 0;
+                Page<HistoryEntity> page = new Page<>(1, 100); // 每页处理 100 条
+                do {
+                    var result = historyDao.page(page, new LambdaQueryWrapper<HistoryEntity>().gt(HistoryEntity::getId, getMemCursor()));
+                    if (result.getRecords().isEmpty()) break;
+                    setMemCursor(createSubmitRequest(result.getRecords()));
+                    requests++;
+                    size += result.getRecords().size();
+                } while (page.hasNext());
+                log.info(tlUI(Lang.BTN_SUBMITTED_BANS, size, requests));
+                setLastStatus(true, new TranslationComponent(Lang.BTN_REPORTED_DATA, size));
+            })).join();
+        } catch (IllegalStateException ignored) {
+            // 子请求已处理报错信息
+        } catch (Throwable e) {
+            log.error(tlUI(Lang.BTN_UNKNOWN_ERROR), e);
+            setLastStatus(false, new TranslationComponent(Lang.BTN_UNKNOWN_ERROR, e.getClass().getName() + ": " + e.getMessage()));
+        }
     }
 
     private long createSubmitRequest(List<HistoryEntity> historyEntities) throws RuntimeException {
@@ -128,7 +135,7 @@ public final class BtnAbilitySubmitBans extends AbstractBtnAbility {
         if (powCaptcha) btnNetwork.gatherAndSolveCaptchaBlocking(request, "submit_bans");
         try (Response resp = btnNetwork.getHttpClient().newCall(request.build()).execute()) {
             if (!resp.isSuccessful()) { // 检查2xx状态码
-                String responseBody = resp.body() != null ? resp.body().string() : "";
+                String responseBody = resp.body().string();
                 log.error(tlUI(Lang.BTN_REQUEST_FAILS, resp.code() + " - " + responseBody));
                 setLastStatus(false, new TranslationComponent(Lang.BTN_HTTP_ERROR, resp.code(), responseBody));
                 throw new IllegalStateException(tlUI(new TranslationComponent(Lang.BTN_HTTP_ERROR, resp.code(), responseBody)));

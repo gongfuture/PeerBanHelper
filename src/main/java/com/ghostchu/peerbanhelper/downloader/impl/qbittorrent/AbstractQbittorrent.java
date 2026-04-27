@@ -22,7 +22,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.reflect.TypeToken;
 import com.vdurmont.semver4j.Semver;
-import inet.ipaddr.Address;
 import inet.ipaddr.IPAddress;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -267,7 +266,7 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
 
                 try (Response response = httpClient.newCall(request).execute()) {
                     if (!response.isSuccessful()) {
-                        throw new IllegalStateException(tlUI(Lang.DOWNLOADER_QB_FAILED_REQUEST_TORRENT_LIST, response.code(), response.body() != null ? response.body().string() : "null"));
+                        throw new IllegalStateException(tlUI(Lang.DOWNLOADER_QB_FAILED_REQUEST_TORRENT_LIST, response.code(), response.body().string()));
                     }
                     String responseBody = response.body().string();
                     List<QBittorrentTorrent> pageTorrents = JsonUtil.getGson().fromJson(responseBody, new TypeToken<List<QBittorrentTorrent>>() {
@@ -326,7 +325,7 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
 
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
-                    throw new IllegalStateException(tlUI(Lang.DOWNLOADER_FAILED_REQUEST_TRACKER_LIST_ON_TORRENT, torrent.getHash(), response.code(), response.body() != null ? response.body().string() : "null"));
+                    throw new IllegalStateException(tlUI(Lang.DOWNLOADER_FAILED_REQUEST_TRACKER_LIST_ON_TORRENT, torrent.getHash(), response.code(), response.body().string()));
                 }
                 String responseBody = response.body().string();
                 List<QBittorrentTorrentTrackers> qbTorrentTrackers = JsonUtil.getGson().fromJson(responseBody, new TypeToken<List<QBittorrentTorrentTrackers>>() {
@@ -417,7 +416,7 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
 
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
-                    log.error(tlUI(Lang.DOWNLOADER_QB_FAILED_SAVE_SPEED_LIMITER, getName(), apiEndpoint, response.code(), "HTTP ERROR", response.body() != null ? response.body().string() : "null"));
+                    log.error(tlUI(Lang.DOWNLOADER_QB_FAILED_SAVE_SPEED_LIMITER, getName(), apiEndpoint, response.code(), "HTTP ERROR", response.body().string()));
                     throw new IllegalStateException("Save qBittorrent shadow banlist error: statusCode=" + response.code());
                 }
             }
@@ -550,11 +549,17 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
 
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
-                    throw new IllegalStateException(tlUI(Lang.DOWNLOADER_FAILED_REQUEST_STATISTICS, response.code(), response.body() != null ? response.body().string() : "null"));
+                    throw new IllegalStateException(tlUI(Lang.DOWNLOADER_FAILED_REQUEST_STATISTICS, getName(), response.body().string()));
                 }
                 String responseBody = response.body().string();
                 QBittorrentMainData mainData = JsonUtil.getGson().fromJson(responseBody, QBittorrentMainData.class);
-                return new DownloaderStatistics(mainData.getServerState().getAlltimeUl(), mainData.getServerState().getAlltimeDl());
+                var ul = mainData.getServerState().getAlltimeUl();
+                var dl = mainData.getServerState().getAlltimeDl();
+                if (ul == 0 && dl == 0) {
+                    // downloader maybe not ready
+                    throw new IllegalStateException(tlUI(Lang.DOWNLOADER_FAILED_REQUEST_STATISTICS, getName(), "not ready (alltimeUl=0, alltimeDl=0)"));
+                }
+                return new DownloaderStatistics(ul, dl);
             }
         } catch (Exception e) {
             throw new IllegalStateException(e);
@@ -571,7 +576,7 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
 
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
-                    throw new IllegalStateException(tlUI(Lang.DOWNLOADER_QB_FAILED_REQUEST_PEERS_LIST_IN_TORRENT, response.code(), response.body() != null ? response.body().string() : "null"));
+                    throw new IllegalStateException(tlUI(Lang.DOWNLOADER_QB_FAILED_REQUEST_PEERS_LIST_IN_TORRENT, response.code(), response.body().string()));
                 }
                 String responseBody = response.body().string();
                 JsonObject object = JsonParser.parseString(responseBody).getAsJsonObject();
@@ -590,16 +595,6 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
                     if (s.contains(".onion") || s.contains(".i2p")) {
                         continue;
                     }
-                    // 一个 QB 本地化问题的 Workaround
-                    if (qbPeer.getPeerId() == null || "Unknown".equals(qbPeer.getPeerId()) || "未知".equals(qbPeer.getPeerId())) {
-                        qbPeer.setPeerIdClient("");
-                    }
-                    if (qbPeer.getClientName() != null) {
-                        if (qbPeer.getClientName().startsWith("Unknown [") && qbPeer.getClientName().endsWith("]")) {
-                            String mid = qbPeer.getClientName().substring("Unknown [".length(), qbPeer.getClientName().length() - 1);
-                            qbPeer.setClient(mid);
-                        }
-                    }
                     qbPeer.getPeerAddress().setRawIp(s);
                     qbPeer.setPeerAddress(natTranslate(qbPeer.getPeerAddress()));
 
@@ -613,69 +608,37 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
     }
 
     protected void setBanListIncrement(Collection<BanMetadata> added) {
-        Map<String, StringJoiner> banTasks = new HashMap<>();
-        added.forEach(p -> {
-            StringJoiner joiner = banTasks.getOrDefault(p.getTorrent().getHash(), new StringJoiner("|"));
-            if (getFeatureFlags().contains(DownloaderFeatureFlag.RANGE_BAN_IP)) {
-                joiner.add(remapBanListAddress(p.getPeer().getAddress().getAddress()).toNormalizedString());
-            } else {
-                joiner.add(p.getPeer().getRawIp());
-            }
-            banTasks.put(p.getTorrent().getHash(), joiner);
-        });
-        banTasks.forEach((hash, peers) -> {
-            FormBody formBody = new FormBody.Builder()
-                    .add("hash", hash)
-                    .add("peers", peers.toString())
+        StringJoiner joiner = new StringJoiner("|");
+        added.forEach(p -> joiner.add(p.getPeer().getRawIp()));
+        FormBody formBody = new FormBody.Builder()
+                .add("peers", joiner.toString())
+                .build();
+
+        try {
+            Request request = new Request.Builder()
+                    .url(apiEndpoint + "/transfer/banPeers")
+                    .post(formBody)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
                     .build();
 
-            try {
-                Request request = new Request.Builder()
-                        .url(apiEndpoint + "/transfer/banPeers")
-                        .post(formBody)
-                        .header("Content-Type", "application/x-www-form-urlencoded")
-                        .build();
-
-                try (Response response = httpClient.newCall(request).execute()) {
-                    if (!response.isSuccessful()) {
-                        log.error(tlUI(Lang.DOWNLOADER_QB_INCREAMENT_BAN_FAILED, getName(), apiEndpoint, response.code(), "HTTP ERROR", response.body() != null ? response.body().string() : "null"));
-                        throw new IllegalStateException("Save qBittorrent banlist error: statusCode=" + response.code());
-                    }
+            try (Response response = httpClient.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    log.error(tlUI(Lang.DOWNLOADER_QB_INCREAMENT_BAN_FAILED, getName(), apiEndpoint, response.code(), "HTTP ERROR", response.body().string()));
+                    throw new IllegalStateException("Save qBittorrent banlist error: statusCode=" + response.code());
                 }
-            } catch (Exception e) {
-                log.error(tlUI(Lang.DOWNLOADER_QB_INCREAMENT_BAN_FAILED, getName(), apiEndpoint, "N/A", e.getClass().getName(), e.getMessage()), e);
-                throw new IllegalStateException(e);
             }
-        });
+        } catch (Exception e) {
+            log.error(tlUI(Lang.DOWNLOADER_QB_INCREAMENT_BAN_FAILED, getName(), apiEndpoint, "N/A", e.getClass().getName(), e.getMessage()), e);
+            throw new IllegalStateException(e);
+        }
     }
 
     protected void setBanListFull(Collection<IPAddress> bannedAddresses) {
-        // todo change this with compatibility check after qbiitorrent merge it
-        String banStr;
-        if (getFeatureFlags().contains(DownloaderFeatureFlag.RANGE_BAN_IP)) {
-            banStr = bannedAddresses.stream()
-                    .map(ipAddr -> remapBanListAddress(ipAddr).toNormalizedString())
-                    .distinct()
-                    .collect(Collectors.joining("\n"));
-        } else {
-            StringJoiner joiner = new StringJoiner("\n");
-            bannedAddresses.stream().distinct().forEach(ipAddr -> {
-                joiner.add(ipAddr.toNormalizedString());
-                if (ipAddr.isIPv4() && ipAddr.isIPv6Convertible()) {
-                    inet.ipaddr.Address ipv6 = ipAddr.toIPv6();
-                    if (ipv6 != null) {
-                        joiner.add(ipv6.toNormalizedString());
-                    }
-                }
-                if (ipAddr.isIPv6() && ipAddr.isIPv4Convertible()) {
-                    Address ipv4 = ipAddr.toIPv4();
-                    if (ipv4 != null) {
-                        joiner.add(ipv4.toNormalizedString());
-                    }
-                }
-            });
-            banStr = joiner.toString();
-        }
+        boolean supportRangeBan = getFeatureFlags().contains(DownloaderFeatureFlag.RANGE_BAN_IP);
+        String banStr = bannedAddresses.stream()
+                .flatMap(ipAddr -> remapBanListAddress(ipAddr, supportRangeBan).stream().map(IPAddress::toCompressedString))
+                .distinct()
+                .collect(Collectors.joining("\n"));
 
         FormBody formBody = new FormBody.Builder()
                 .add("json", JsonUtil.getGson().toJson(Map.of("banned_IPs", banStr)))
@@ -690,7 +653,7 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
 
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
-                    log.error(tlUI(Lang.DOWNLOADER_QB_FAILED_SAVE_BANLIST, getName(), apiEndpoint, response.code(), "HTTP ERROR", response.body() != null ? response.body().string() : "null"));
+                    log.error(tlUI(Lang.DOWNLOADER_QB_FAILED_SAVE_BANLIST, getName(), apiEndpoint, response.code(), "HTTP ERROR", response.body().string()));
                     throw new IllegalStateException("Save qBittorrent banlist error: statusCode=" + response.code());
                 }
             }
@@ -719,7 +682,7 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
 
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
-                    log.error(tlUI(Lang.DOWNLOADER_FAILED_SAVE_BT_PROTOCOL_PORT, getName(), apiEndpoint, response.code(), "HTTP ERROR", response.body() != null ? response.body().string() : "null"));
+                    log.error(tlUI(Lang.DOWNLOADER_FAILED_SAVE_BT_PROTOCOL_PORT, getName(), apiEndpoint, response.code(), "HTTP ERROR", response.body().string()));
                     throw new IllegalStateException("Save qBittorrent BTProtocolPort failed: statusCode=" + response.code());
                 }
             }
@@ -739,6 +702,7 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
 
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
+                    log.error(tlUI(Lang.DOWNLOADER_FAILED_RETRIEVE_BT_PROTOCOL_PORT, getName(), response.code() + " " + response.body().string()));
                     throw new IllegalStateException("Request failed with code: " + response.code());
                 }
                 String responseBody = response.body().string();
@@ -747,6 +711,7 @@ public abstract class AbstractQbittorrent extends AbstractDownloader {
                 return preferences.getListenPort();
             }
         } catch (Exception e) {
+            log.error(tlUI(Lang.DOWNLOADER_FAILED_RETRIEVE_BT_PROTOCOL_PORT, getName(), e.getClass().getName() + ": " + e.getMessage()), e);
             throw new IllegalStateException(e);
         }
     }

@@ -21,8 +21,10 @@ import java.util.Map;
 @Slf4j
 @Service
 public class BanListServiceImpl extends AbstractCommonService<BanListMapper, BanListEntity> implements BanListService {
-    @Autowired
-    private TransactionTemplate transactionTemplate;
+
+    public BanListServiceImpl(@NotNull TransactionTemplate transactionTemplate) {
+        super(transactionTemplate);
+    }
 
     @Override
     public @NotNull Map<IPAddress, BanMetadata> readBanList() {
@@ -40,7 +42,7 @@ public class BanListServiceImpl extends AbstractCommonService<BanListMapper, Ban
     public int saveBanList(@NotNull BanList banlist) {
         List<BanListEntity> entityList = new ArrayList<>();
         banlist.forEach((key, value) -> entityList.add(new BanListEntity(
-                key.toNormalizedString(), JsonUtil.tiny().toJson(value))));
+                key.toCompressedString(), JsonUtil.tiny().toJson(value))));
         Integer integer = transactionTemplate.execute(_->{
             baseMapper.delete(null);
             return baseMapper.insert(entityList).size();

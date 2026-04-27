@@ -75,9 +75,9 @@ public final class SwarmTrackingModule extends AbstractFeatureModule implements 
     @Override
     public void onEnable() {
         Main.getEventBus().register(this);
-        javalinWebContainer.javalin()
+        javalinWebContainer.javalinRouter()
                 .get("/api/modules/swarm-tracking", this::handleWebAPI, Role.USER_READ);
-        javalinWebContainer.javalin()
+        javalinWebContainer.javalinRouter()
                 .get("/api/modules/swarm-tracking/details", this::handleDetails, Role.USER_READ);
         trackedSwarmDao.resetTable();
         registerScheduledTask(trackedSwarmDao::flushAll, 0, getConfig().getLong("data-flush-interval"), TimeUnit.MILLISECONDS);
@@ -101,7 +101,11 @@ public final class SwarmTrackingModule extends AbstractFeatureModule implements 
     @Override
     public void onDisable() {
         Main.getEventBus().unregister(this);
-        trackedSwarmDao.flushAll();
+        try {
+            trackedSwarmDao.closeCache();
+        } catch (Exception e) {
+            log.warn("Unable to close tracked swarm cache instance", e);
+        }
     }
 
     @Override

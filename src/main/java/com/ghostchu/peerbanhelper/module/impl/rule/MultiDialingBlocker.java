@@ -55,7 +55,7 @@ public final class MultiDialingBlocker extends AbstractRuleFeatureModule impleme
     @Override
     public void onEnable() {
         reloadConfig();
-        webContainer.javalin()
+        webContainer.javalinRouter()
                 .get("/api/modules/" + getConfigName(), this::handleConfig, Role.USER_READ)
                 .get("/api/modules/" + getConfigName() + "/status", this::handleStatus, Role.USER_READ);
         Main.getReloadManager().register(this);
@@ -149,7 +149,7 @@ public final class MultiDialingBlocker extends AbstractRuleFeatureModule impleme
         String torrentId = torrent.getId();
         IPAddress peerAddress = peer.getPeerAddress().getAddress();
         String peerIpStr = peerAddress.toString();
-        IPAddress peerSubnet = peerAddress.isIPv4() ? IPAddressUtil.toPrefixBlockAndZeroHost(peerAddress, subnetMaskLength) : IPAddressUtil.toPrefixBlockAndZeroHost(peerAddress, subnetMaskV6Length);
+        IPAddress peerSubnet = peerAddress.isIPv4() ? peerAddress.toPrefixBlock(subnetMaskLength) : peerAddress.toPrefixBlock(subnetMaskV6Length);
         try {
             long currentTimestamp = System.currentTimeMillis();
 

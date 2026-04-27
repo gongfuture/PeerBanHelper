@@ -215,9 +215,9 @@ public class Main {
             sentryOptions.setPrintUncaughtStackTrace(true);
             sentryOptions.setEnableUncaughtExceptionHandler(true);
             sentryOptions.setSampleRate(ExternalSwitch.parseDouble("sentry.samplerate", 0.2d));
-            sentryOptions.setProfilesSampleRate(ExternalSwitch.parseDouble("sentry.profilessamplerate", 0.2d));
-            sentryOptions.setTracesSampleRate(ExternalSwitch.parseDouble("sentry.tracesamplerate", 0.2d));
-            sentryOptions.setProfileSessionSampleRate(ExternalSwitch.parseDouble("sentry.profilesessionsamplerate", 0.2d));
+            sentryOptions.setProfilesSampleRate(ExternalSwitch.parseDouble("sentry.profilessamplerate", 0.0d));
+            sentryOptions.setTracesSampleRate(ExternalSwitch.parseDouble("sentry.tracesamplerate", 0.0d));
+            sentryOptions.setProfileSessionSampleRate(ExternalSwitch.parseDouble("sentry.profilesessionsamplerate", 0.0d));
             sentryOptions.setEnableUserInteractionTracing(false); // Do not tracker user behavior
             sentryOptions.setRelease(meta.getVersion());
             sentryOptions.setTag("os", System.getProperty("os.name"));
@@ -296,7 +296,38 @@ public class Main {
         } catch (Throwable e) {
             log.warn("Failed to set log level", e);
         }
+        try {
+            cleanupLogs();
+        } catch (Throwable e) {
+            log.warn("Failed to cleanup old logs", e);
+        }
+    }
 
+    private static void cleanupLogs() {
+        if (!logsDirectory.exists()) return;
+        File[] logsFile = logsDirectory.listFiles((dir, name) -> {
+            if (name == null) return false;
+            // .log.gz is compressed history logs, .tmp is uncompressed old logs (it not get compressed due application crashes or some other reason)
+            return name.endsWith(".log.gz") || name.endsWith(".tmp");
+        });
+        if (logsFile == null) return;
+        Arrays.sort(logsFile, (o1, o2) -> Long.compare(o2.lastModified(), o1.lastModified()));
+        long weekAgo = System.currentTimeMillis() - java.util.concurrent.TimeUnit.DAYS.toMillis(7);
+        int skipped = 0;
+        for (File file : logsFile) {
+            if (skipped < 5) {
+                skipped++;
+                continue;
+            }
+            if (file.lastModified() < weekAgo) {
+                boolean success = file.delete();
+                if (success) {
+                    log.info("Deleted old logs file: {}", file.getAbsolutePath());
+                } else {
+                    log.warn("Failed to delete old logs file: {}", file.getAbsolutePath());
+                }
+            }
+        }
     }
 
     public static ReloadResult reloadModule() {

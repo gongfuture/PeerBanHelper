@@ -83,7 +83,7 @@ public final class ExpressionRule extends AbstractRuleFeatureModule implements R
             log.error("Failed to load scripts", e);
             Sentry.captureException(e);
         }
-        javalinWebContainer.javalin()
+        javalinWebContainer.javalinRouter()
                 .get("/api/" + getConfigName() + "/scripts", this::listScripts, Role.USER_READ)
                 .get("/api/" + getConfigName() + "/editable", this::editable, Role.USER_READ)
                 .get("/api/" + getConfigName() + "/{scriptId}", this::readScript, Role.USER_READ)
@@ -288,7 +288,7 @@ public final class ExpressionRule extends AbstractRuleFeatureModule implements R
                 return pass();
             } catch (Exception ex) {
                 log.error(tlUI(Lang.RULE_ENGINE_ERROR, script.name()), ex);
-                Sentry.captureException(ex);
+                //Sentry.captureException(ex);
                 return pass();
             }
             if (result != null && result.action() != PeerAction.NO_ACTION) {
